@@ -1,0 +1,6 @@
+github.com/andreburgaud/crypt2go v1.6.0 h1:fZd6AWPYWLwzGQpk2MqiUgcax7Mh86uba+ZiOZw51lg=
+github.com/andreburgaud/crypt2go v1.6.0/go.mod h1:6kn17HKUqQtbTUHwYcyTHmvZYVLYUqA5jwiCQE6h5N4=
+github.com/valyala/fastjson v1.6.4 h1:uAUNq9Z6ymTgGhcm0UynUAB6tlbakBrz6CQFax3BXVQ=
+github.com/valyala/fastjson v1.6.4/go.mod h1:CLCAqky6SMuOcxStkYQvblddUtoRxhYMGLrsQns1aXY=
+golang.org/x/crypto v0.25.0 h1:ypSNr+bnYL2YhwoMt2zPxHFmbAN1KZs/njMG3hxUp30=
+golang.org/x/crypto v0.25.0/go.mod h1:T+wALwcMOSE0kXgUAnPAHqTLW+XHgcELELW8VaDgm/M=
