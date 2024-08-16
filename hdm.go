@@ -273,8 +273,8 @@ type Item struct {
 	Price       float64 `json:"price"`
 }
 
-func CreateItem(productCode string, productName string, qty float64, price float64) Item {
-	return Item{
+func CreateItem(productCode string, productName string, qty float64, price float64) *Item {
+	return &Item{
 		AdgCode:     adgCode,
 		Dep:         2,
 		ProductCode: productCode,
@@ -403,7 +403,7 @@ func (h *Client) printPrepaymentReceipt(conn net.Conn, amount float64) ([]byte, 
 	return h.readResponse(conn, false)
 }
 
-func (h *Client) printItemsReceipt(conn net.Conn, items []Item, prepaymentAmount float64) ([]byte, error) {
+func (h *Client) printItemsReceipt(conn net.Conn, items []*Item, prepaymentAmount float64) ([]byte, error) {
 	request := h.getBuffer()
 	defer h.putBuffer(request)
 
@@ -427,7 +427,7 @@ func (h *Client) printItemsReceipt(conn net.Conn, items []Item, prepaymentAmount
 
 	body := struct {
 		Seq              int64   `json:"password"`
-		Items            []Item  `json:"items"`
+		Items            []*Item `json:"items"`
 		PaidAmount       float64 `json:"paidAmount"`
 		PaidAmountCard   float64 `json:"paidAmountCard"`
 		PartialAmount    float64 `json:"partialAmount"`
@@ -486,7 +486,7 @@ func (h *Client) PrintPrepaymentReceipt(ctx context.Context, amount float64) ([]
 	return h.printPrepaymentReceipt(conn, amount)
 }
 
-func (h *Client) PrintItemsReceipt(ctx context.Context, items []Item, prepaymentAmount float64) ([]byte, error) {
+func (h *Client) PrintItemsReceipt(ctx context.Context, items map[int64]*Item, prepaymentAmount float64) ([]byte, error) {
 	d := &net.Dialer{}
 
 	conn, err := d.DialContext(ctx, "tcp", h.addr)
@@ -502,5 +502,10 @@ func (h *Client) PrintItemsReceipt(ctx context.Context, items []Item, prepayment
 		return nil, err
 	}
 
-	return h.printItemsReceipt(conn, items, prepaymentAmount)
+	var itemsArr []*Item
+	for _, value := range items {
+		itemsArr = append(itemsArr, value)
+	}
+
+	return h.printItemsReceipt(conn, itemsArr, prepaymentAmount)
 }
