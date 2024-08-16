@@ -2,6 +2,7 @@ package hdm
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -12,12 +13,11 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 var DefaultHeader = []byte{0xD5, 0x80, 0xD4, 0xB4, 0xD5, 0x84, 0x00, 0x07}
 
-const adgCode = "0408"
+const adgCode = "86.23"
 
 type Client struct {
 	firstKey   []byte
@@ -27,6 +27,7 @@ type Client struct {
 	skMutex    sync.RWMutex
 	parserPool *fastjson.ParserPool
 	seq        atomic.Int64
+	bufferPool *sync.Pool
 }
 
 func New(password string, addr string) *Client {
@@ -34,7 +35,18 @@ func New(password string, addr string) *Client {
 	h.Write([]byte(password))
 	firstKey := h.Sum(nil)[:24]
 
-	return &Client{firstKey: firstKey, password: password, addr: addr, parserPool: new(fastjson.ParserPool)}
+	return &Client{firstKey: firstKey, password: password, addr: addr, parserPool: new(fastjson.ParserPool), bufferPool: &sync.Pool{New: func() interface{} {
+		return new(bytes.Buffer)
+	}}}
+}
+
+func (h *Client) getBuffer() *bytes.Buffer {
+	return h.bufferPool.Get().(*bytes.Buffer)
+}
+
+func (h *Client) putBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	h.bufferPool.Put(buf)
 }
 
 func (h *Client) readResponse(conn net.Conn, password bool) ([]byte, error) {
@@ -75,8 +87,11 @@ func (h *Client) readResponse(conn net.Conn, password bool) ([]byte, error) {
 }
 
 func (h *Client) getOperatorsAndDeps(conn net.Conn) ([]byte, error) {
-	request := new(bytes.Buffer)
-	payloadJson := new(bytes.Buffer)
+	request := h.getBuffer()
+	defer h.putBuffer(request)
+
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
 
 	_, err := request.Write(DefaultHeader)
 	if err != nil {
@@ -122,8 +137,11 @@ func (h *Client) getOperatorsAndDeps(conn net.Conn) ([]byte, error) {
 }
 
 func (h *Client) operatorLogin(conn net.Conn) error {
-	request := new(bytes.Buffer)
-	payloadJson := new(bytes.Buffer)
+	request := h.getBuffer()
+	defer h.putBuffer(request)
+
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
 
 	_, err := request.Write(DefaultHeader)
 	if err != nil {
@@ -191,8 +209,11 @@ func (h *Client) operatorLogin(conn net.Conn) error {
 }
 
 func (h *Client) printLastReceipt(conn net.Conn) error {
-	request := new(bytes.Buffer)
-	payloadJson := new(bytes.Buffer)
+	request := h.getBuffer()
+	defer h.putBuffer(request)
+
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
 
 	_, err := request.Write(DefaultHeader)
 	if err != nil {
@@ -252,7 +273,7 @@ type Item struct {
 	Price       float64 `json:"price"`
 }
 
-func createItem(productCode string, productName string, qty float64, price float64) Item {
+func CreateItem(productCode string, productName string, qty float64, price float64) Item {
 	return Item{
 		AdgCode:     adgCode,
 		Dep:         2,
@@ -265,8 +286,11 @@ func createItem(productCode string, productName string, qty float64, price float
 }
 
 func (h *Client) printSimpleReceipt(conn net.Conn, amount float64) ([]byte, error) {
-	request := new(bytes.Buffer)
-	payloadJson := new(bytes.Buffer)
+	request := h.getBuffer()
+	defer h.putBuffer(request)
+
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
 
 	_, err := request.Write(DefaultHeader)
 	if err != nil {
@@ -320,27 +344,163 @@ func (h *Client) printSimpleReceipt(conn net.Conn, amount float64) ([]byte, erro
 	return h.readResponse(conn, false)
 }
 
-func (h *Client) PrintSimpleReceipt(amount float64) ([]byte, error) {
-	conn, err := net.Dial("tcp", h.addr)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+func (h *Client) printPrepaymentReceipt(conn net.Conn, amount float64) ([]byte, error) {
+	request := h.getBuffer()
+	defer h.putBuffer(request)
 
-	err = conn.SetReadDeadline(time.Now().Add(3 * time.Minute))
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
+
+	_, err := request.Write(DefaultHeader)
 	if err != nil {
 		return nil, err
 	}
 
-	err = conn.SetWriteDeadline(time.Now().Add(3 * time.Minute))
+	_, err = request.Write([]byte{0x04, 0x00})
 	if err != nil {
 		return nil, err
 	}
+
+	body := struct {
+		Seq              int64   `json:"password"`
+		Items            []Item  `json:"items"`
+		PaidAmount       float64 `json:"paidAmount"`
+		PaidAmountCard   float64 `json:"paidAmountCard"`
+		PartialAmount    float64 `json:"partialAmount"`
+		PrePaymentAmount float64 `json:"prePaymentAmount"`
+		Mode             int     `json:"mode"`
+		Dep              int     `json:"dep"`
+		PartnerTin       *string `json:"partnerTin"`
+		UseExtPOS        bool    `json:"useExtPOS"`
+	}{Seq: h.seq.Add(1), Items: nil, PaidAmount: 0, Mode: 3, Dep: 2, PartnerTin: nil, PartialAmount: 0, PaidAmountCard: amount, PrePaymentAmount: 0, UseExtPOS: false}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	encryptedBody, err := TripleDesEncrypt(bodyBytes, h.sessionKey)
+	if err != nil {
+		return nil, err
+	}
+
+	payloadJson.Write(encryptedBody)
+
+	length := make([]byte, 2)
+	binary.BigEndian.PutUint16(length, uint16(payloadJson.Len()))
+	request.Write(length)
+
+	_, err = request.Write(payloadJson.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = conn.Write(request.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return h.readResponse(conn, false)
+}
+
+func (h *Client) printItemsReceipt(conn net.Conn, items []Item, prepaymentAmount float64) ([]byte, error) {
+	request := h.getBuffer()
+	defer h.putBuffer(request)
+
+	payloadJson := h.getBuffer()
+	defer h.putBuffer(payloadJson)
+
+	_, err := request.Write(DefaultHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = request.Write([]byte{0x04, 0x00})
+	if err != nil {
+		return nil, err
+	}
+
+	var totalAmount float64
+	for _, item := range items {
+		totalAmount += item.Price * item.Qty
+	}
+
+	body := struct {
+		Seq              int64   `json:"password"`
+		Items            []Item  `json:"items"`
+		PaidAmount       float64 `json:"paidAmount"`
+		PaidAmountCard   float64 `json:"paidAmountCard"`
+		PartialAmount    float64 `json:"partialAmount"`
+		PrePaymentAmount float64 `json:"prePaymentAmount"`
+		Mode             int     `json:"mode"`
+		Dep              int     `json:"dep"`
+		PartnerTin       *string `json:"partnerTin"`
+		UseExtPOS        bool    `json:"useExtPOS"`
+	}{Seq: h.seq.Add(1), Items: items, PaidAmount: 0, Mode: 2, Dep: 2, PartnerTin: nil, PartialAmount: 0, PaidAmountCard: totalAmount - prepaymentAmount, PrePaymentAmount: prepaymentAmount, UseExtPOS: false}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	encryptedBody, err := TripleDesEncrypt(bodyBytes, h.sessionKey)
+	if err != nil {
+		return nil, err
+	}
+
+	payloadJson.Write(encryptedBody)
+
+	length := make([]byte, 2)
+	binary.BigEndian.PutUint16(length, uint16(payloadJson.Len()))
+	request.Write(length)
+
+	_, err = request.Write(payloadJson.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = conn.Write(request.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return h.readResponse(conn, false)
+}
+
+func (h *Client) PrintPrepaymentReceipt(ctx context.Context, amount float64) ([]byte, error) {
+	d := &net.Dialer{}
+
+	conn, err := d.DialContext(ctx, "tcp", h.addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	err = h.operatorLogin(conn)
 	if err != nil {
 		return nil, err
 	}
 
-	return h.printSimpleReceipt(conn, amount)
+	return h.printPrepaymentReceipt(conn, amount)
+}
+
+func (h *Client) PrintItemsReceipt(ctx context.Context, items []Item, prepaymentAmount float64) ([]byte, error) {
+	d := &net.Dialer{}
+
+	conn, err := d.DialContext(ctx, "tcp", h.addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	err = h.operatorLogin(conn)
+	if err != nil {
+		return nil, err
+	}
+
+	return h.printItemsReceipt(conn, items, prepaymentAmount)
 }
