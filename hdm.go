@@ -486,7 +486,7 @@ func (h *Client) PrintPrepaymentReceipt(ctx context.Context, amount float64) ([]
 	return h.printPrepaymentReceipt(conn, amount)
 }
 
-func (h *Client) PrintItemsReceipt(ctx context.Context, items map[int64]*Item, prepaymentAmount float64) ([]byte, error) {
+func (h *Client) PrintItemsReceipt(ctx context.Context, items map[string]*Item, prepaymentAmount float64) ([]byte, error) {
 	d := &net.Dialer{}
 
 	conn, err := d.DialContext(ctx, "tcp", h.addr)
