@@ -474,13 +474,11 @@ type Item struct {
 	Price       float64 `json:"price"`
 }
 
-type PublicItem struct {
+func (h *Client) PrintItemsReceipt(ctx context.Context, publicItems []struct {
 	Name  string `json:"name"`
 	Price int64  `json:"price"`
 	Qty   int64  `json:"qty"`
-}
-
-func (h *Client) PrintItemsReceipt(ctx context.Context, publicItems []PublicItem) ([]byte, error) {
+}) ([]byte, error) {
 	d := &net.Dialer{}
 
 	conn, err := d.DialContext(ctx, "tcp", h.addr)
