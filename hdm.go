@@ -263,28 +263,6 @@ func (h *Client) printLastReceipt(conn net.Conn) error {
 	return nil
 }
 
-type Item struct {
-	AdgCode     string  `json:"adgCode"`
-	Dep         int     `json:"dep"`
-	ProductCode string  `json:"productCode"`
-	ProductName string  `json:"productName"`
-	Qty         float64 `json:"qty"`
-	Unit        string  `json:"unit"`
-	Price       float64 `json:"price"`
-}
-
-func CreateItem(productCode string, productName string, qty float64, price float64) *Item {
-	return &Item{
-		AdgCode:     adgCode,
-		Dep:         2,
-		ProductCode: productCode,
-		ProductName: productName,
-		Qty:         qty,
-		Unit:        "հատ",
-		Price:       price,
-	}
-}
-
 func (h *Client) printSimpleReceipt(conn net.Conn, amount float64) ([]byte, error) {
 	request := h.getBuffer()
 	defer h.putBuffer(request)
@@ -403,7 +381,7 @@ func (h *Client) printPrepaymentReceipt(conn net.Conn, amount float64) ([]byte, 
 	return h.readResponse(conn, false)
 }
 
-func (h *Client) printItemsReceipt(conn net.Conn, items []*Item, prepaymentAmount float64) ([]byte, error) {
+func (h *Client) printItemsReceipt(conn net.Conn, items []Item) ([]byte, error) {
 	request := h.getBuffer()
 	defer h.putBuffer(request)
 
@@ -427,7 +405,7 @@ func (h *Client) printItemsReceipt(conn net.Conn, items []*Item, prepaymentAmoun
 
 	body := struct {
 		Seq              int64   `json:"password"`
-		Items            []*Item `json:"items"`
+		Items            []Item  `json:"items"`
 		PaidAmount       float64 `json:"paidAmount"`
 		PaidAmountCard   float64 `json:"paidAmountCard"`
 		PartialAmount    float64 `json:"partialAmount"`
@@ -436,7 +414,7 @@ func (h *Client) printItemsReceipt(conn net.Conn, items []*Item, prepaymentAmoun
 		Dep              int     `json:"dep"`
 		PartnerTin       *string `json:"partnerTin"`
 		UseExtPOS        bool    `json:"useExtPOS"`
-	}{Seq: h.seq.Add(1), Items: items, PaidAmount: 0, Mode: 2, Dep: 2, PartnerTin: nil, PartialAmount: 0, PaidAmountCard: totalAmount - prepaymentAmount, PrePaymentAmount: prepaymentAmount, UseExtPOS: false}
+	}{Seq: h.seq.Add(1), Items: items, PaidAmount: 0, Mode: 2, Dep: 2, PartnerTin: nil, PartialAmount: 0, PaidAmountCard: 0, PrePaymentAmount: totalAmount, UseExtPOS: false}
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -486,7 +464,23 @@ func (h *Client) PrintPrepaymentReceipt(ctx context.Context, amount float64) ([]
 	return h.printPrepaymentReceipt(conn, amount)
 }
 
-func (h *Client) PrintItemsReceipt(ctx context.Context, items map[string]*Item, prepaymentAmount float64) ([]byte, error) {
+type Item struct {
+	AdgCode     string  `json:"adgCode"`
+	Dep         int     `json:"dep"`
+	ProductCode string  `json:"productCode"`
+	ProductName string  `json:"productName"`
+	Qty         float64 `json:"qty"`
+	Unit        string  `json:"unit"`
+	Price       float64 `json:"price"`
+}
+
+type PublicItem struct {
+	Name  string `json:"name"`
+	Price int64  `json:"price"`
+	Qty   int64  `json:"qty"`
+}
+
+func (h *Client) PrintItemsReceipt(ctx context.Context, publicItems []PublicItem) ([]byte, error) {
 	d := &net.Dialer{}
 
 	conn, err := d.DialContext(ctx, "tcp", h.addr)
@@ -502,10 +496,19 @@ func (h *Client) PrintItemsReceipt(ctx context.Context, items map[string]*Item, 
 		return nil, err
 	}
 
-	var itemsArr []*Item
-	for _, value := range items {
-		itemsArr = append(itemsArr, value)
+	var items []Item
+
+	for _, item := range publicItems {
+		items = append(items, Item{
+			AdgCode:     adgCode,
+			Dep:         2,
+			ProductCode: "000000",
+			ProductName: item.Name,
+			Qty:         float64(item.Qty),
+			Unit:        "հատ",
+			Price:       float64(item.Price),
+		})
 	}
 
-	return h.printItemsReceipt(conn, itemsArr, prepaymentAmount)
+	return h.printItemsReceipt(conn, items)
 }
